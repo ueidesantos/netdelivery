@@ -38,6 +38,7 @@ public class VideoDownloader : IDisposable
     private int _totalVideos;
     private int _completedDownloads;
     private int _failedDownloads;
+    private int _queuedVideos; // Contador para monitorar tamanho da fila
 
     public VideoDownloader(
         ILogger<VideoDownloader> logger,
@@ -170,11 +171,11 @@ public class VideoDownloader : IDisposable
             await _downloadChannel.Writer.WriteAsync(video, cancellationToken);
             
             Interlocked.Increment(ref _totalVideos);
+            Interlocked.Increment(ref _queuedVideos);
             
             // Monitoramento: Exibir tamanho da fila
-            var queueSize = _downloadChannel.Reader.Count;
             _logger.LogInformation("📥 Vídeo adicionado à fila: {FileName}", video.FileName);
-            _logger.LogInformation("📥 Tamanho atual da fila: {QueueSize}", queueSize);
+            _logger.LogInformation("📥 Tamanho atual da fila: {QueueSize}", _queuedVideos);
         }
         
         return videos.Count;
@@ -207,6 +208,8 @@ public class VideoDownloader : IDisposable
                     
                     var totalSize = response.Content.Headers.ContentLength ?? 0;
                     long downloadedSize = 0;
+                    long lastLoggedSize = 0; // Para rastrear quando logar progresso
+                    const long logIntervalBytes = 1024 * 1024; // Logar a cada 1MB
                     
                     await using var contentStream = await response.Content.ReadAsStreamAsync(cancellationToken);
                     await using var fileStream = new FileStream(
@@ -225,11 +228,12 @@ public class VideoDownloader : IDisposable
                         await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
                         downloadedSize += bytesRead;
                         
-                        // Log de progresso para arquivos grandes (a cada 1MB)
-                        if (totalSize > 0 && downloadedSize % (1024 * 1024) == 0)
+                        // Log de progresso para arquivos grandes (a cada 1MB de progresso)
+                        if (totalSize > 0 && (downloadedSize - lastLoggedSize) >= logIntervalBytes)
                         {
                             var progress = (downloadedSize / (double)totalSize) * 100;
                             _logger.LogDebug("Progresso {FileName}: {Progress:F1}%", video.FileName, progress);
+                            lastLoggedSize = downloadedSize;
                         }
                     }
                     
@@ -237,6 +241,7 @@ public class VideoDownloader : IDisposable
                         video.FileName, downloadedSize);
                     
                     Interlocked.Increment(ref _completedDownloads);
+                    Interlocked.Decrement(ref _queuedVideos);
                     
                     // Monitoramento: Exibir total de downloads concluídos
                     _logger.LogInformation("✅ Total de downloads concluídos: {Completed}", _completedDownloads);
@@ -265,6 +270,7 @@ public class VideoDownloader : IDisposable
             // Todas as tentativas falharam
             _logger.LogError("❌ Falha ao baixar: {FileName}", video.FileName);
             Interlocked.Increment(ref _failedDownloads);
+            Interlocked.Decrement(ref _queuedVideos);
             return false;
         }
         finally

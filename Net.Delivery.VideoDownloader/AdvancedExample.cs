@@ -25,7 +25,8 @@ public class AdvancedExample
         using var loggerFactory = LoggerFactory.Create(builder =>
         {
             builder
-                .SetMinimumLevel(LogLevel.Debug); // Debug para ver mais detalhes
+                .SetMinimumLevel(LogLevel.Debug) // Debug para ver mais detalhes
+                .AddConsole();
         });
 
         var logger = loggerFactory.CreateLogger<VideoDownloader>();
